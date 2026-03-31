@@ -1,7 +1,9 @@
 #!/bin/bash
-#
-# This script can build U-Boot, the Kernle, the RootFS, or all of above on arm64.
-# 
+##########################################################################################
+# Author: Ray
+# Email: veidongray@qq.com
+# Description: This script is used to build the root filesystem for arm64 architecture.
+##########################################################################################
 
 ### Configurations and global variables ###
 # 支持的参数列表
@@ -13,15 +15,17 @@ HOST_NAME=$(grep '^NAME=' /etc/os-release | cut -d'=' -f2 | tr -d '"')
 # 获取主机发行版版本号，如：24.04
 HOST_VERID=$(grep '^VERSION_ID=' /etc/os-release | cut -d'=' -f2 | tr -d '"')
 # 输出目录
-OUTDIR="$PWD/output"
+OUTDIR="output"
+# 日志目录
+LOGDIR="logs"
 # 根文件系统构建目录
-ROOTFSDIR="$OUTDIR/rootfs"
+ROOTFSDIR=""
 # 在chroot里面运行的脚本路径
-SCRIPTDIR="$PWD/scripts"
+SCRIPTDIR="scripts"
 # 具体的根文件系统配置脚本名称
 SCRIPT="script_focal.sh"
 # 对应版本apt mirror文件
-MIRRORSDIR="$PWD/mirrors"
+MIRRORSDIR="mirrors"
 mirror_ubuntu_2004="$MIRRORSDIR/mirror_ubuntu_2004.txt"
 mirror_ubuntu_2204="$MIRRORSDIR/mirror_ubuntu_2204.txt"
 mirror_ubuntu_2404="$MIRRORSDIR/mirror_ubuntu_2404.txt"
@@ -31,65 +35,60 @@ DEBMIRROR="https://mirrors.aliyun.com/ubuntu-ports/"
 ### Functions ###
 
 function rootfs () {
-    log_info "Create output directory"
-    mkdir -pv $OUTDIR
-
-    log_info "Install host depends"
-    sudo apt install -y $HOST_DEPENDS
-
     log_info "Run debootstrap"
-    #if ! sudo debootstrap --arch=arm64 \
-    #    --components=main,universe,restricted,multiverse \
-    #    --include=ubuntu-standard \
-    #    $TARGET $ROOTFSDIR $DEBMIRROR; then
-    #        exit 1
-    #fi
+    if ! debootstrap --arch=arm64 \
+        --components=main,universe,restricted,multiverse \
+        --include=ubuntu-minimal \
+        $TARGET $ROOTFSDIR $DEBMIRROR; then
+            log_err "debootstrap failed!"
+    fi
 
     log_info "Copy script to rootfs"
-    sudo cp -v $SCRIPTDIR/$SCRIPT $ROOTFSDIR
-    sudo chmod -v a+x $ROOTFSDIR/$SCRIPT
+    cp -v $SCRIPTDIR/$SCRIPT $ROOTFSDIR
+    chmod -v a+x $ROOTFSDIR/$SCRIPT
 
     if [ "$TARGET" == "focal" ]; then
         log_info "Configure apt mirror"
-        sudo cp -v $mirror_ubuntu_2004 $ROOTFSDIR/etc/apt/sources.list
+        cp -v $mirror_ubuntu_2004 $ROOTFSDIR/etc/apt/sources.list
     elif [ "$TARGET" == "jammy" ]; then
         log_info "Configure apt mirror"
-        sudo cp -v $mirror_ubuntu_2204 $ROOTFSDIR/etc/apt/sources.list
+        cp -v $mirror_ubuntu_2204 $ROOTFSDIR/etc/apt/sources.list
     elif [ "$TARGET" == "noble" ]; then
         log_info "Configure apt mirror"
-        sudo cp -v $mirror_ubuntu_2404 $ROOTFSDIR/etc/apt/sources.list.d/ubuntu.sources
+        cp -v $mirror_ubuntu_2404 $ROOTFSDIR/etc/apt/sources.list.d/ubuntu.sources
     fi
 
     log_info "chroot to rootfs"
-    sudo chroot $OUTDIR/rootfs /bin/bash $SCRIPT
+    chroot $ROOTFSDIR /bin/bash $SCRIPT
 
     log_info "Logout from chroot"
 
-    log_info "Create rootfs image to $OUTDIR/disk.img"
-    sudo dd if=/dev/zero of=$OUTDIR/disk.img bs=1G count=10 conv=sync
-    sudo mkfs.ext4 -v $OUTDIR/disk.img
-    mkdir -pv $OUTDIR/mnt
-    sudo mount -v -t ext4 $OUTDIR/disk.img $OUTDIR/mnt
+    log_info "Create rootfs image to $PWD/$OUTDIR/$TARGET/disk.img"
+    dd if=/dev/zero of=$OUTDIR/$TARGET/disk.img bs=1G count=10 conv=sync
+    mkfs.ext4 -v $OUTDIR/$TARGET/disk.img
+    mkdir -pv $OUTDIR/$TARGET/mnt
+    mount -v -t ext4 $OUTDIR/$TARGET/disk.img $OUTDIR/$TARGET/mnt
 
-    log_info "Package rootfs to $OUTDIR/disk.tar"
-    if ! sudo tar \
-        --numeric-owner \
+    log_info "Package rootfs to $PWD/$OUTDIR/$TARGET/disk.tar"
+    if ! tar --numeric-owner \
         --preserve-permissions \
         --exclude="dev/*" \
         --exclude="proc/*" \
         --exclude="sys/*" \
         --exclude="tmp/*" \
-        -cf $OUTDIR/disk.tar -C $ROOTFSDIR/ .; then
+        -cf $OUTDIR/$TARGET/disk.tar -C $ROOTFSDIR .; then
             exit 1
     fi
 
-    log_info "Extract rootfs to $OUTDIR/mnt"
-    sudo tar -xf $OUTDIR/disk.tar -C $OUTDIR/mnt
-    sudo umount -v -t ext4 $OUTDIR/mnt
+    log_info "Extract rootfs to $PWD/$OUTDIR/$TARGET/mnt"
+    tar --numeric-owner \
+        --preserve-permissions \
+        -xf $OUTDIR/$TARGET/disk.tar -C $OUTDIR/$TARGET/mnt
+    umount -v -t ext4 $OUTDIR/$TARGET/mnt
 
     log_info "Resize rootfs image"
-    sudo e2fsck -f -y $OUTDIR/disk.img
-    sudo resize2fs -M $OUTDIR/disk.img
+    e2fsck -f -y $OUTDIR/$TARGET/disk.img
+    resize2fs -M $OUTDIR/$TARGET/disk.img
 
     log_info "Done!"
 }
@@ -104,20 +103,20 @@ function help () {
 }
 
 function log_info () {
-    local str="[\033[32m$0\033[0m] $(date): $1"
+    local str="[\033[32m$0\033[0m] [I] $(date): $1"
     echo -e "$str"
-    echo -e "$(date): $1" >> $PWD/logs/$(date +%Y%m%d).log
+    echo -e "[I] $(date): $1" >> $LOGDIR/$(date +%Y%m%d).log
 }
 
 function log_err () {
-    local str="[\033[31m$0\033[0m] $(date): $1"
+    local str="[\033[31m$0\033[0m] [E] $(date): $1"
     echo -e "$str"
-    echo -e "$(date): $1" >> $PWD/logs/$(date +%Y%m%d).log
+    echo -e "[E] $(date): $1" >> $LOGDIR/$(date +%Y%m%d).log
 }
 
 function clean() {
     log_info "Clean $OUTDIR"
-    sudo rm -rvf $OUTDIR
+    rm -rvf $OUTDIR $LOGDIR
 }
 
 function check_host() {
@@ -135,7 +134,17 @@ function main()
     local rootfs_flag=false
     local target_flag=false
 
+    mkdir -pv $LOGDIR
+    mkdir -pv $OUTDIR
+
+    log_info "Start building"
+    log_info "Check host environment"
     check_host
+    log_info "Host environment check passed"
+
+    log_info "Install host depends"
+    apt install -y $HOST_DEPENDS
+    
     if (( $# > 0 )); then
         while getopts "$ARGSLIST" opt; do
             case "$opt" in
@@ -148,6 +157,7 @@ function main()
                     ;;
                 d|D)
                     TARGET="$OPTARG"
+                    ROOTFSDIR="$OUTDIR/$TARGET/rootfs"
                     target_flag=true
                     ;;
                 c|C)
@@ -165,7 +175,15 @@ function main()
         exit 1
     fi
 
+    log_info "Host: $HOST_NAME $HOST_VERID"
+    log_info "Arguments: $*"
+    log_info "Output directory: $OUTDIR"
+    log_info "RootFS directory: $ROOTFSDIR"
+    log_info "Script directory: $SCRIPTDIR"
+    log_info "Mirror for debootstrap: $DEBMIRROR"
+
     if [ $rootfs_flag == true ] && [ $target_flag == true ]; then
+        mkdir -pv $OUTDIR/$TARGET
         rootfs
     else
         help
@@ -173,5 +191,17 @@ function main()
     fi
     exit 0
 }
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Running as root"
+    CURRENTDIR=$(pwd)
+    # 进入脚本所在目录运行
+    cd "$(dirname "$0")"
+    main "$@"
+    # 回到原来的目录
+    cd "$CURRENTDIR"
+    exit 0
+else
+    echo "Not running as root"
+    exit 1
+fi
 
-main "$@"
