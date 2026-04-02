@@ -143,14 +143,6 @@ function main()
     mkdir -pv $LOGDIR
     mkdir -pv $OUTDIR
 
-    log_info "Start building"
-    log_info "Check host environment"
-    check_host
-    log_info "Host environment check passed"
-
-    log_info "Install host depends"
-    apt install -y $HOST_DEPENDS
-    
     if (( $# > 0 )); then
         while getopts "$ARGSLIST" opt; do
             case "$opt" in
@@ -180,6 +172,14 @@ function main()
         help
         exit 1
     fi
+
+    log_info "Start building"
+    log_info "Check host environment"
+    check_host
+    log_info "Host environment check passed"
+
+    log_info "Install host depends"
+    apt install -y $HOST_DEPENDS
 
     log_info "Host: $HOST_NAME $HOST_VERID"
     log_info "Arguments: $*"
