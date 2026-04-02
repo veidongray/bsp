@@ -7,7 +7,7 @@
 
 ### Configurations and global variables ###
 # 支持的参数列表
-ARGSLIST="hHrRcCd:D:"
+ARGSLIST="hHrRcCd:D:s:S:m:M:"
 # 主机需要安装的依赖和软件包
 HOST_DEPENDS="debootstrap qemu-user qemu-user-static qemu-system"
 # 获取主机名称，如：Ubuntu
@@ -22,13 +22,10 @@ LOGDIR="logs"
 ROOTFSDIR=""
 # 在chroot里面运行的脚本路径
 SCRIPTDIR="scripts"
-# 具体的根文件系统配置脚本名称
-SCRIPT="script_focal.sh"
-# 对应版本apt mirror文件
-MIRRORSDIR="mirrors"
-mirror_ubuntu_2004="$MIRRORSDIR/mirror_ubuntu_2004.txt"
-mirror_ubuntu_2204="$MIRRORSDIR/mirror_ubuntu_2204.txt"
-mirror_ubuntu_2404="$MIRRORSDIR/mirror_ubuntu_2404.txt"
+# Default script name for rootfs
+SCRIPT="script.sh"
+# Default file name for mirror
+MIRRORFILE="mirrors.txt"
 # 用于debootstrap下载的mirror
 DEBMIRROR="https://mirrors.aliyun.com/ubuntu-ports/"
 
@@ -36,32 +33,24 @@ DEBMIRROR="https://mirrors.aliyun.com/ubuntu-ports/"
 
 function rootfs () {
     log_info "Run debootstrap"
-    if ! debootstrap --arch=arm64 \
-        --components=main,universe,restricted,multiverse \
-        --include=ubuntu-minimal \
-        $TARGET $ROOTFSDIR $DEBMIRROR; then
-            log_err "debootstrap failed!"
-            return 1
-    fi
+    #if ! debootstrap --arch=arm64 \
+    #    --components=main,universe,restricted,multiverse \
+    #    --include=ubuntu-minimal \
+    #    $TARGET $ROOTFSDIR $DEBMIRROR; then
+    #        log_err "debootstrap failed!"
+    #        return 1
+    #fi
 
     log_info "Copy script to rootfs"
-    cp -v $SCRIPTDIR/$SCRIPT $ROOTFSDIR
+    cp -v configs/$TARGET/$SCRIPTDIR/$SCRIPT $ROOTFSDIR
     chmod -v a+x $ROOTFSDIR/$SCRIPT
 
-    if [ "$TARGET" == "focal" ]; then
-        log_info "Configure apt mirror"
-        cp -v $mirror_ubuntu_2004 $ROOTFSDIR/etc/apt/sources.list
-    elif [ "$TARGET" == "jammy" ]; then
-        log_info "Configure apt mirror"
-        cp -v $mirror_ubuntu_2204 $ROOTFSDIR/etc/apt/sources.list
-    elif [ "$TARGET" == "noble" ]; then
-        log_info "Configure apt mirror"
-        cp -v $mirror_ubuntu_2404 $ROOTFSDIR/etc/apt/sources.list.d/ubuntu.sources
-    fi
+    log_info "Configure apt mirror"
+    mirror_ubuntu="configs/$TARGET/mirrors/$MIRRORFILE"
+    cp -v $mirror_ubuntu $ROOTFSDIR/etc/apt/sources.list
 
     log_info "chroot to rootfs"
     chroot $ROOTFSDIR /bin/bash $SCRIPT
-
     log_info "Logout from chroot"
 
     log_info "Create rootfs image to $PWD/$OUTDIR/$TARGET/disk.img"
@@ -78,6 +67,7 @@ function rootfs () {
         --exclude="sys/*" \
         --exclude="tmp/*" \
         -cf $OUTDIR/$TARGET/disk.tar -C $ROOTFSDIR .; then
+            umount -v -t ext4 $OUTDIR/$TARGET/mnt
             return 1
     fi
 
@@ -85,6 +75,7 @@ function rootfs () {
     if ! tar --numeric-owner \
         --preserve-permissions \
         -xf $OUTDIR/$TARGET/disk.tar -C $OUTDIR/$TARGET/mnt; then
+            umount -v -t ext4 $OUTDIR/$TARGET/mnt
             return 1
     fi
     umount -v -t ext4 $OUTDIR/$TARGET/mnt
@@ -100,8 +91,10 @@ function rootfs () {
 function help () {
     echo "usage: $0 -$ARGSLIST"
     echo -e "\t-h|-H Show help infomations"
-    echo -e "\t-d|-D [arguments...] TARGET [focal|jammy|noble]"
+    echo -e "\t-d|-D [arguments...] TARGET in configs/*"
     echo -e "\t-r|-R Build RootFS"
+    echo -e "\t-s|-S Script path"
+    echo -e "\t-m|-M Mirror path"
     echo -e "\t-c|-C Clean"
     echo -e "\n"
     echo -e "Example: $0 -r -d focal"
@@ -120,7 +113,7 @@ function log_err () {
 }
 
 function clean() {
-    log_info "Clean $OUTDIR"
+    log_info "rm -rf $OUTDIR $LOGDIR"
     rm -rf $OUTDIR $LOGDIR
 }
 
@@ -146,9 +139,6 @@ function main()
     local rootfs_flag=false
     local target_flag=false
 
-    mkdir -pv $LOGDIR
-    mkdir -pv $OUTDIR
-
     if (( $# > 0 )); then
         while getopts "$ARGSLIST" opt; do
             case "$opt" in
@@ -162,14 +152,23 @@ function main()
                 d|D)
                     TARGET="$OPTARG"
                     ROOTFSDIR="$OUTDIR/$TARGET/rootfs"
-                    if [ "$TARGET" == "focal" ] \
-                        || [ "$TARGET" == "jammy" ] \
-                        || [ "$TARGET" == "noble" ]; then
-                                            target_flag=true
-                                        else
-                                            help
-                                            return 1
+                    for dir in configs/*; do
+                        if [ -d "$dir" ]; then
+                            if [ "$(basename $dir)" == "$TARGET" ]; then
+                                target_flag=true
+                            fi
+                        fi
+                    done
+                    if [ $target_flag != true ]; then
+                        help
+                        return 1
                     fi
+                    ;;
+                s|S)
+                    SCRIPT="$OPTARG"
+                    ;;
+                m|M)
+                    MIRRORFILE="$OPTARG"
                     ;;
                 c|C)
                     clean
@@ -229,6 +228,8 @@ if [ "$(id -u)" -eq 0 ]; then
     CURRENTDIR=$(pwd)
     # 进入脚本所在目录运行
     cd "$(dirname "$0")"
+    mkdir -p $LOGDIR
+    mkdir -p $OUTDIR
     main "$@"
     # 回到原来的目录
     cd "$CURRENTDIR"
